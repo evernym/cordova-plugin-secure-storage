@@ -97,32 +97,10 @@ SecureStorageiOS.prototype = {
 // so we don't create own definition for Windows and simply re-use iOS
 SecureStorageWindows = SecureStorageiOS;
 
-SecureStorageAndroid = function (success, error, service, options) {
-    var self = this;
-
-    if (options) {
-        this.options = _merge_options(this.options, options);
-    }
-
+SecureStorageAndroid = function(success, error, service) {
     this.service = service;
     try {
-        _executeNativeMethod(
-            function (native_aes_supported) {
-                self.options.native = native_aes_supported && self.options.native;
-                if (!self.options.native){
-                    success();
-                } else {
-                    if (!localStorage.getItem('_SS_MIGRATED_TO_NATIVE')) {
-                        self._migrate_to_native(success);
-                    } else {
-                        success();
-                    }
-                }
-            },
-            error,
-            'init',
-            [this.service]
-        );
+        _executeNativeMethod(success, error, "init", [this.service]);
     } catch (e) {
         error(e);
     }
@@ -130,184 +108,31 @@ SecureStorageAndroid = function (success, error, service, options) {
 };
 
 SecureStorageAndroid.prototype = {
-    options: {
-        native: true,
-    },
 
-    get: function (success, error, key) {
-        if (this.options.native) {
-            this._native_get(success, error, key);
-        } else {
-            this._sjcl_get(success, error, key);
+    set: function(success, error, key, value) {
+        try {
+            _executeNativeMethod(success, error, "encrypt", [key, value]);
+        } catch (e) {
+            error(e);
         }
     },
 
-    set: function (success, error, key, value) {
-        if (this.options.native) {
-            this._native_set(success, error, key, value);
-        } else {
-            this._sjcl_set(success, error, key, value);
+    get: function(success, error, key) {
+        try {
+            _executeNativeMethod(success, error, "decrypt", [key]);;
+        } catch (e) {
+            error(e);
         }
     },
 
     remove: function (success, error, key) {
-        localStorage.removeItem('_SS_' + key);
-        success(key);
-    },
-
-    secureDevice: function (success, error) {
-        _executeNativeMethod(
-            success,
-            error,
-            'secureDevice', []);
-
-    },
-
-    _sjcl_get: function (success, error, key) {
-        var payload, encAESKey;
-
         try {
-            payload = this._get_payload(key);
-            encAESKey = payload.key;
-            _executeNativeMethod(
-                function (AESKey) {
-                    var value, AESKeyBits;
-                    try {
-                        AESKeyBits = sjcl_ss.codec.base64.toBits(AESKey);
-                        value = sjcl_ss.decrypt(AESKeyBits, payload.value);
-                        success(value);
-                    } catch (e) {
-                        error(e);
-                    }
-                },
-                error,
-                'decrypt_rsa',
-                [encAESKey]
-            );
+            _executeNativeMethod(success, error, "removeKeys", [key]);
         } catch (e) {
             error(e);
-        }
-    },
-
-    _sjcl_set: function (success, error, key, value) {
-        var AESKey, encValue;
-
-        try {
-            AESKey = sjcl_ss.random.randomWords(8);
-            _AES_PARAM.adata = this.service;
-            encValue = sjcl_ss.encrypt(AESKey, value, _AES_PARAM);
-            // Encrypt the AES key
-            _executeNativeMethod(
-                function (encKey) {
-                    localStorage.setItem('_SS_' + key, JSON.stringify({key: encKey, value: encValue}));
-                    success(key);
-                },
-                error,
-                'encrypt_rsa',
-                [sjcl_ss.codec.base64.fromBits(AESKey)]
-            );
-        } catch (e) {
-            error(e);
-        }
-    },
-
-    _native_get: function (success, error, key) {
-        var payload, AESkey, value;
-
-        try {
-            payload = this._get_payload(key);
-            AESkey = payload.key;
-            value = payload.value;
-            _executeNativeMethod(
-                success,
-                error,
-                'decrypt',
-                [AESkey, value.ct, value.iv, value.adata]
-            );
-        } catch (e) {
-            error(e);
-        }
-    },
-
-    _native_set: function (success, error, key, value) {
-        try {
-            _executeNativeMethod(
-                function (result) {
-                    localStorage.setItem('_SS_' + key, JSON.stringify(result));
-                    success(key);
-                },
-                error,
-                'encrypt',
-                [value, this.service]
-            );
-        } catch (e) {
-            error(e);
-        }
-    },
-
-    _get_payload: function (key) {
-        var payload = localStorage.getItem('_SS_' + key);
-
-        if (!payload) {
-            throw new Error('Key "' + key + '" not found.');
-        }
-        return JSON.parse(payload);
-    },
-
-    _migrate_to_native: function (success) {
-        var keysLeft, payload, i, key, migrated, sjcl_get_success, sjcl_get_error;
-        var self = this;
-        var migrateKeys = [];
-
-        migrated = function () {
-            localStorage.setItem('_SS_MIGRATED_TO_NATIVE', '1');
-            success();
-        };
-
-        for (key in localStorage) {
-            if (localStorage.hasOwnProperty(key)) {
-                if (key.startsWith('_SS_')) {
-                    payload = JSON.parse(localStorage.getItem(key));
-                    //Just in case init was interrupted and rerun
-                    if (!payload.native) {
-                        migrateKeys.push(key.replace('_SS_', ''));
-                    }
-                }
-            }
-        }
-
-        if (migrateKeys.length === 0) {
-            migrated();
-            return;
-        }
-
-        sjcl_get_success = function (value) {
-            self._native_set(
-                function (key) {
-                    //Remove processed key
-                    keysLeft.splice(keysLeft.indexOf(key), 1);
-                    if (keysLeft.length === 0) {
-                        migrated();
-                    }
-                },
-                function () {},
-                key,
-                value
-            );
-        };
-
-        sjcl_get_error = function () {};
-
-        keysLeft = migrateKeys.slice();
-        for (i = 0; i < migrateKeys.length; i++) {
-            key = migrateKeys[i];
-            this._sjcl_get(
-                sjcl_get_success,
-                sjcl_get_error,
-                key
-            );
         }
     }
+
 };
 
 SecureStorageBrowser = function (success, error, service) {

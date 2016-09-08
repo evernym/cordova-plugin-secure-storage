@@ -1,61 +1,35 @@
 package com.crypho.plugins;
 
-import java.lang.reflect.Method;
-
-import android.util.Log;
-import android.util.Base64;
-import android.os.Build;
-import android.content.Context;
-import android.content.Intent;
-
-import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaArgs;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.CallbackContext;
+
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import javax.crypto.Cipher;
+
+import android.content.Context;
+import android.util.Log;
+import android.util.Base64;
+import android.security.KeyPairGeneratorSpec;
 import android.app.KeyguardManager;
 
+import java.security.*;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.lang.reflect.Method;
+import java.lang.StringBuffer;
+import java.util.Calendar;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.security.auth.x500.X500Principal;
+
 public class SecureStorage extends CordovaPlugin {
-    private static final String TAG = "SecureStorage";
-
-    private String ALIAS;
-    private int SUPPORTS_NATIVE_AES;
-    private volatile CallbackContext initContext, secureDeviceContext;
-    private volatile boolean initContextRunning = false;
-
-    @Override
-    public void onResume(boolean multitasking) {
-
-        if (secureDeviceContext != null) {
-            if (isDeviceSecure()) {
-                secureDeviceContext.success();
-            } else {
-                secureDeviceContext.error("Device is not secure");
-            }
-            secureDeviceContext = null;
-        }
-
-        if (initContext != null && !initContextRunning) {
-            cordova.getThreadPool().execute(new Runnable() {
-                public void run() {
-                    initContextRunning = true;
-                    try {
-                        if (!RSA.isEntryAvailable(ALIAS)) {
-                            RSA.createKeyPair(getContext(), ALIAS);
-                        }
-                        initContext.success(SUPPORTS_NATIVE_AES);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Init failed :", e);
-                        initContext.error(e.getMessage());
-                    } finally {
-                        initContext = null;
-                        initContextRunning = false;
-                    }
-                }
-            });
-        }
-    }
 
     private boolean isDeviceSecure() {
         KeyguardManager keyguardManager = (KeyguardManager)(getContext().getSystemService(Context.KEYGUARD_SERVICE));
@@ -68,118 +42,152 @@ public class SecureStorage extends CordovaPlugin {
         }
     }
 
+    public static final String DeviceNotSecureMessage = "Device is not secure, please enable pattern/pin/lock to device";
+
     @Override
-    public boolean execute(String action, CordovaArgs args, final CallbackContext callbackContext) throws JSONException {
-        if ("init".equals(action)) {
-            // 0 is falsy in js while 1 is truthy
-            SUPPORTS_NATIVE_AES = Build.VERSION.SDK_INT >= 21 ? 1 : 0;
-            ALIAS = getContext().getPackageName() + "." + args.getString(0);
+    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
+
+        if (action.equals("init")) {
             if (!isDeviceSecure()) {
-                String message = "Device is not secure";
-                Log.e(TAG, message);
-                callbackContext.error(message);
-            } else if (!RSA.isEntryAvailable(ALIAS)) {
-                initContext = callbackContext;
-                unlockCredentials();
+                Log.e(Constants.TAG, DeviceNotSecureMessage);
+                callbackContext.error(DeviceNotSecureMessage);
             } else {
-                callbackContext.success(SUPPORTS_NATIVE_AES);
+                callbackContext.success("Device is secure");
             }
             return true;
         }
-        if ("encrypt".equals(action)) {
-            final String encryptMe = args.getString(0);
-            final String adata = args.getString(1);
 
-            cordova.getThreadPool().execute(new Runnable() {
-                public void run() {
-                    try {
-                        Cipher encKeyCipher = RSA.createCipher(Cipher.ENCRYPT_MODE, ALIAS);
-                        JSONObject result = AES.encrypt(encKeyCipher, encryptMe.getBytes(), adata.getBytes());
-                        callbackContext.success(result);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Encrypt (RSA/AES) failed :", e);
-                        callbackContext.error(e.getMessage());
-                    }
-                }
-            });
-            return true;
-        }
-        if ("decrypt".equals(action)) {
-            // getArrayBuffer does base64 decoding
-            final byte[] encKey = args.getArrayBuffer(0);
-            final byte[] ct = args.getArrayBuffer(1);
-            final byte[] iv = args.getArrayBuffer(2);
-            final byte[] adata = args.getArrayBuffer(3);
-            cordova.getThreadPool().execute(new Runnable() {
-                public void run() {
-                    try {
-                        byte[] key = RSA.decrypt(encKey, ALIAS);
-                        String decrypted = new String(AES.decrypt(ct, key, iv, adata));
-                        callbackContext.success(decrypted);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Decrypt (RSA/AES) failed :", e);
-                        callbackContext.error(e.getMessage());
-                    }
-                }
-            });
-            return true;
-        }
-        if ("decrypt_rsa".equals(action)) {
-            // getArrayBuffer does base64 decoding
-            final byte[] decryptMe = args.getArrayBuffer(0);
-            cordova.getThreadPool().execute(new Runnable() {
-                public void run() {
-                    try {
-                        byte[] decrypted = RSA.decrypt(decryptMe, ALIAS);
-                        callbackContext.success(new String (decrypted));
-                    } catch (Exception e) {
-                        Log.e(TAG, "Decrypt (RSA) failed :", e);
-                        callbackContext.error(e.getMessage());
-                    }
-                }
-            });
-            return true;
-        }
-        if ("encrypt_rsa".equals(action)) {
-            final String encryptMe = args.getString(0);
-            cordova.getThreadPool().execute(new Runnable() {
-                public void run() {
-                    try {
-                        byte[] encrypted = RSA.encrypt(encryptMe.getBytes(), ALIAS);
-                        callbackContext.success(Base64.encodeToString(encrypted, Base64.DEFAULT));
-                    } catch (Exception e) {
-                        Log.e(TAG, "Encrypt (RSA) failed :", e);
-                        callbackContext.error(e.getMessage());
-                    }
-                }
-            });
+        if (action.equals("encrypt")) {
+            String alias = args.getString(0);
+            String input = args.getString(1);
+            this.encrypt(alias, input, callbackContext);
             return true;
         }
 
-        if ("secureDevice".equals(action)) {
-            secureDeviceContext = callbackContext;
-            unlockCredentials();
+        if (action.equals("decrypt")) {
+            String alias = args.getString(0);
+            this.decrypt(alias, callbackContext);
+            return true;
+        }
+
+        if (action.equals("removeKeys")) {
+            String alias = args.getString(0);
+            this.removeKeyFile(alias, callbackContext);
             return true;
         }
 
         return false;
+    }
+
+    private void encrypt(String alias, String input, CallbackContext callbackContext) {
+
+        try {
+
+            if (isDeviceSecure()) {
+                KeyStore keyStore = KeyStore.getInstance(Constants.KEYSTORE);
+                keyStore.load(null);
+
+                if (!keyStore.containsAlias(alias)) {
+                    Calendar start = Calendar.getInstance();
+                    Calendar end = Calendar.getInstance();
+                    end.add(Calendar.YEAR, 1);
+                    KeyPairGeneratorSpec spec = new KeyPairGeneratorSpec.Builder(
+                            getContext())
+                            .setAlias(alias)
+                            .setSubject(new X500Principal("CN=" + alias))
+                            .setSerialNumber(BigInteger.ONE)
+                            .setStartDate(start.getTime())
+                            .setEndDate(end.getTime())
+                            .build();
+
+                    KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA", Constants.KEYSTORE);
+                    generator.initialize(spec);
+
+                    KeyPair keyPair = generator.generateKeyPair();
+
+                    Log.i(Constants.TAG, "created new key pairs");
+                }
+
+                PublicKey publicKey = keyStore.getCertificate(alias).getPublicKey();
+
+                if (input.isEmpty()) {
+                    Log.d(Constants.TAG, "Exception: input text is empty");
+                    return;
+                }
+
+                Cipher cipher = Cipher.getInstance(Constants.RSA_ALGORITHM);
+                cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                CipherOutputStream cipherOutputStream = new CipherOutputStream(
+                        outputStream, cipher);
+                cipherOutputStream.write(input.getBytes("UTF-8"));
+                cipherOutputStream.close();
+                byte[] vals = outputStream.toByteArray();
+
+                // writing key to storage
+                KeyStorage.writeValues(getContext(), alias, vals);
+                Log.i(Constants.TAG, "key created and stored successfully");
+                callbackContext.success("key created and stored successfully");
+
+            } else {
+                callbackContext.error(DeviceNotSecureMessage);
+            }
+
+        } catch (Exception e) {
+            Log.e(Constants.TAG, "Exception: "  + e.getMessage());
+            callbackContext.error("Exception: "  + e.getMessage());
+        }
 
     }
 
-    private void unlockCredentials() {
-        cordova.getActivity().runOnUiThread(new Runnable() {
-            public void run() {
-                Intent intent = new Intent("com.android.credentials.UNLOCK");
-                startActivity(intent);
+    private void decrypt(String alias, CallbackContext callbackContext) {
+
+        try {
+
+            KeyStore keyStore = KeyStore.getInstance(Constants.KEYSTORE);
+            keyStore.load(null);
+            PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, null);
+
+
+            Cipher output = Cipher.getInstance(Constants.RSA_ALGORITHM);
+            output.init(Cipher.DECRYPT_MODE, privateKey);
+            CipherInputStream cipherInputStream = new CipherInputStream(
+                    new ByteArrayInputStream(KeyStorage.readValues(getContext(), alias)), output);
+
+            ArrayList<Byte> values = new ArrayList<Byte>();
+            int nextByte;
+            while ((nextByte = cipherInputStream.read()) != -1) {
+                values.add((byte)nextByte);
             }
-        });
+            byte[] bytes = new byte[values.size()];
+            for(int i = 0; i < bytes.length; i++) {
+                bytes[i] = values.get(i).byteValue();
+            }
+
+            String finalText = new String(bytes, 0, bytes.length, "UTF-8");
+            callbackContext.success(finalText);
+
+        } catch (Exception e) {
+            Log.e(Constants.TAG, "Exception: "  + e.getMessage());
+            callbackContext.error("Exception: "  + e.getMessage());
+        }
+    }
+
+    private void removeKeyFile(String alias, CallbackContext callbackContext) {
+
+        try {
+            KeyStorage.resetValues(getContext(), alias);
+            Log.i(Constants.TAG, "keys removed successfully");
+            callbackContext.success("keys removed successfully");
+
+        } catch (Exception e) {
+            Log.e(Constants.TAG, "Exception: "  + e.getMessage());
+            callbackContext.error("Exception: "  + e.getMessage());
+        }
     }
 
     private Context getContext(){
         return cordova.getActivity().getApplicationContext();
     }
 
-    private void startActivity(Intent intent){
-        cordova.getActivity().startActivity(intent);
-    }
 }
