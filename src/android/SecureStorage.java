@@ -8,10 +8,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 import android.util.Base64;
 import android.security.KeyPairGeneratorSpec;
 import android.app.KeyguardManager;
+import android.widget.Toast;
 
 import java.security.*;
 import java.math.BigInteger;
@@ -42,7 +44,7 @@ public class SecureStorage extends CordovaPlugin {
         }
     }
 
-    public static final String DeviceNotSecureMessage = "Device is not secure, please enable pattern/pin/lock to device";
+    public static final String DeviceNotSecureMessage = "Device is not secure, please enable pattern/pin/lock into device.";
 
     @Override
     public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
@@ -50,7 +52,7 @@ public class SecureStorage extends CordovaPlugin {
         if (action.equals("init")) {
             if (!isDeviceSecure()) {
                 Log.e(Constants.TAG, DeviceNotSecureMessage);
-                callbackContext.error(DeviceNotSecureMessage);
+                this.goToSettingsDialog(callbackContext);
             } else {
                 callbackContext.success("Device is secure");
             }
@@ -130,7 +132,7 @@ public class SecureStorage extends CordovaPlugin {
                 callbackContext.success("key created and stored successfully");
 
             } else {
-                callbackContext.error(DeviceNotSecureMessage);
+                goToSettingsDialog(callbackContext);
             }
 
         } catch (Exception e) {
@@ -188,6 +190,20 @@ public class SecureStorage extends CordovaPlugin {
 
     private Context getContext(){
         return cordova.getActivity().getApplicationContext();
+    }
+
+    private void goToSettingsDialog(CallbackContext callbackContext) {
+        try {
+            Toast.makeText(getContext(), DeviceNotSecureMessage, Toast.LENGTH_SHORT).show();
+            callbackContext.success("Opening phone settings");
+        } catch (Exception e) {
+            Log.e(Constants.TAG, "Exception: "  + e.getMessage());
+            callbackContext.error("Exception: "  + e.getMessage());
+        }
+    }
+
+    private void startActivity(Intent intent){
+        cordova.getActivity().startActivity(intent);
     }
 
 }
