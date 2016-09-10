@@ -13,7 +13,9 @@ import android.util.Log;
 import android.util.Base64;
 import android.security.KeyPairGeneratorSpec;
 import android.app.KeyguardManager;
-import android.widget.Toast;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.provider.Settings;
 
 import java.security.*;
 import java.math.BigInteger;
@@ -132,7 +134,7 @@ public class SecureStorage extends CordovaPlugin {
                 callbackContext.success("key created and stored successfully");
 
             } else {
-                goToSettingsDialog(callbackContext);
+                callbackContext.error(DeviceNotSecureMessage);
             }
 
         } catch (Exception e) {
@@ -194,8 +196,24 @@ public class SecureStorage extends CordovaPlugin {
 
     private void goToSettingsDialog(CallbackContext callbackContext) {
         try {
-            Toast.makeText(getContext(), DeviceNotSecureMessage, Toast.LENGTH_SHORT).show();
-            callbackContext.success("Opening phone settings");
+            AlertDialog alertDialog = new AlertDialog.Builder(cordova.getActivity())
+                .setTitle("Device not secure")
+                .setMessage(DeviceNotSecureMessage)
+                    .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            startActivity(new Intent(Settings.ACTION_SETTINGS));
+                            dialog.dismiss();
+                        }
+                    })
+                    .setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            dialog.cancel();
+                        }
+                    })
+                    .create();
+
+            alertDialog.show();
+            callbackContext.error(DeviceNotSecureMessage);
         } catch (Exception e) {
             Log.e(Constants.TAG, "Exception: "  + e.getMessage());
             callbackContext.error("Exception: "  + e.getMessage());
